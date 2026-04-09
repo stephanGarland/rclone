@@ -36,6 +36,9 @@ func (s *Storage) _check() {
 		// Check to see if config file has changed since it was last loaded
 		fi, err := os.Stat(configPath)
 		if err == nil {
+			if (fi.Mode() & os.ModeNamedPipe) != 0 {
+				return
+			}
 			// check to see if config file has changed and if it has, reload it
 			if s.fi == nil || !fi.ModTime().Equal(s.fi.ModTime()) || fi.Size() != s.fi.Size() {
 				fs.Debugf(nil, "Config file has changed externally - reloading")
@@ -73,10 +76,17 @@ func (s *Storage) _load() (err error) {
 	}
 	defer fs.CheckClose(fd, &err)
 
+	buf := new(bytes.Buffer)
+	_, err = buf.ReadFrom(fd)
+	if err != nil {
+		return err
+	}
+	rdr := bytes.NewReader(buf.Bytes())
+
 	// Update s.fi with the current file info
 	s.fi, _ = os.Stat(configPath)
 
-	cryptReader, err := config.Decrypt(fd)
+	cryptReader, err := config.Decrypt(rdr)
 	if err != nil {
 		return err
 	}
@@ -106,6 +116,11 @@ func (s *Storage) Save() error {
 	if configPath == "" {
 		return fmt.Errorf("failed to save config file, path is empty")
 	}
+	fi, err := os.Stat(configPath)
+	if err == nil && (fi.Mode()&os.ModeNamedPipe) != 0 {
+		return fmt.Errorf("failed to save config file: config is loaded from a FIFO")
+	}
+
 	configDir, configName := filepath.Split(configPath)
 
 	info, err := os.Lstat(configPath)
